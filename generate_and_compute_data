@@ -1,0 +1,330 @@
+import math
+import Rhino.Geometry as rg  # Import Rhino.Geometry to use Point3d
+
+def generate_and_compute_data(v, Ro, Ri): #Ro = outer sphere radius, Ri = inner sphere radius
+    # Convert v to an integer, if it's not already
+    v = int(v) # geodesic frequency
+
+    # Validate the input 'v'
+    if v < 2 or v % 2 != 0:
+        raise ValueError("Input 'v' must be an even integer greater than or equal to 2.")
+    
+    # Initialize data table
+    data_table = []
+    index = 0
+
+    # Generate data table
+    for H in [0, 1]:  # H loops from 0 to 1
+        for Q in [0, 1, 2, 3]:  # Q loops only through 0 to 3
+            for R in range(v + 1):  # R loops from 0 to v
+                if R == 0:
+                    # When R is 0, L does not have values to iterate over, so we create a row directly
+                    L = 0
+                    R_str = "{:02d}".format(R)
+                    L_str = "{:02d}".format(L)
+                    name_str = "{}{}{}{}".format(H, Q, R_str, L_str)
+                    row = [index, H, Q, R, L, name_str]
+                    data_table.append(row)
+                    index += 1
+                else:
+                    # For R > 0, iterate over L from 0 to R-1
+                    for L in range(R):  # L loops from 0 to R-1
+                        R_str = "{:02d}".format(R)
+                        L_str = "{:02d}".format(L)
+                        name_str = "{}{}{}{}".format(H, Q, R_str, L_str)
+                        row = [index, H, Q, R, L, name_str]
+                        data_table.append(row)
+                        index += 1
+
+    # Define headers
+    headers = ['Index', 'H', 'Q', 'R', 'L', 'Name']
+
+    # Generate points
+    points = []
+    
+    for row in data_table:
+        if not isinstance(row, list) or len(row) != 6:
+            continue  # Skip invalid rows
+        
+        # Unpack row data
+        index, H, Q, R, L, name = row
+
+        # Convert values to expected types
+        H = int(H)
+        Q = int(Q)
+        R = int(R)
+        L = int(L)
+        
+        # Compute spherical coordinates
+        Offset = Ro
+        if R == 0:
+            XY_angle = 0
+            Z_angle = 0
+        else:
+         if H == 0:
+            XY_angle = (L * math.pi / (2 * R)) + (Q * math.pi / 2)
+            Z_angle = R * math.pi / (2 * v)
+         else:
+            XY_angle = math.pi - (L * math.pi / (2 * R)) - (Q * math.pi / 2)
+            Z_angle = math.pi - (R * math.pi / (2 * v))
+        
+        # Convert spherical coordinates to Cartesian coordinates
+        x = Offset * math.cos(XY_angle) * math.sin(Z_angle)
+        y = Offset * math.sin(XY_angle) * math.sin(Z_angle)
+        z = Offset * math.cos(Z_angle)
+        
+        # Create a Rhino Point3d object and append it to the list
+        point = rg.Point3d(x, y, z)
+        points.append(point)
+
+    # Generate A-triangle topology
+    Atriangles = []
+    for H in [0, 1]:  # H loops from 0 to 1
+        for Q in [1, 3]:  # Q loops only through 0 and 2
+            Point1 = "{}{}{:02d}{:02d}".format(H, Q, 1, 0)
+            Point2 = "{}{}{:02d}{:02d}".format(H, Q, 2, 1)
+            if Q+1<4:
+                Q3=Q+1
+            else: Q3=0
+            Point3 = "{}{}{:02d}{:02d}".format(H, Q3, 1, 0)
+            Atriangles.append([Point1, Point2, Point3])
+    for Ra in range(2, v, 2):  # R loops from 2 to v-1
+        for j in range(1, Ra, 2):
+            for H in [0, 1]:  # H loops from 0 to 1
+                for Q in [0, 2]:  # Q loops only through 0 and 2
+                    Point1 = "{}{}{:02d}{:02d}".format(H, Q, Ra, j)
+                    Point2 = "{}{}{:02d}{:02d}".format(H, Q, Ra + 1, j)
+                    Point3 = "{}{}{:02d}{:02d}".format(H, Q, Ra + 1, j+1)
+                    Atriangles.append([Point1, Point2, Point3])
+    for Ra in range(3, v, 2):  # R loops from 1 to v-2
+        for j in range(2, Ra + 2, 2):
+            for H in [0, 1]:  # H loops from 0 to 1
+                for Q in [1, 3]:  # Q loops only through 0 and 2
+                    Point1 = "{}{}{:02d}{:02d}".format(H, Q , Ra, j - 2)
+                    if H==0:
+                        Q2 = Q
+                        L2 = j - 1
+                        H2 = 0
+                    else:
+                            if Ra == v - 1:
+                             Q2 = (1 - Q) % 4
+                             L2 = v - j + 1
+                             H2 = 0
+                            else:
+                               Q2 = Q
+                               L2 = j - 1
+                               H2 = H
+                    Point2 = "{}{}{:02d}{:02d}".format(H2, Q2, Ra + 1, L2)
+                    Q3 = Q  if j < Ra else Q + 1
+                    Q3 = Q3 if Q3 < 4 else 0
+                    L3 = j - 1 if j < Ra else 0
+                    Point3 = "{}{}{:02d}{:02d}".format(H, Q3, Ra, L3)
+                    Atriangles.append([Point1, Point2, Point3])
+
+    # Generate closed polylines for each Atriangle
+    Apolylines = []
+    for triangle in Atriangles:
+        indices = []
+        for point_name in triangle:
+            # Find the row in data_table where the 'Name' matches point_name
+            index = next((row[0] for row in data_table if row[5] == point_name), None)
+            if index is not None:
+                indices.append(index)
+
+        if len(indices) == 3:
+            pt1 = points[indices[0]]
+            pt2 = points[indices[1]]
+            pt3 = points[indices[2]]
+            polyline = rg.Polyline([pt1, pt2, pt3, pt1])  # Closed polyline
+            Apolylines.append(polyline)
+
+    # Generate B-triangle topology
+    Btriangles = []
+    for H in [0, 1]:  # H loops from 0 to 1
+        for Q in [0, 2]:  # Q loops only through 0 and 2
+            Point1 = "{}{}{:02d}{:02d}".format(H, Q, 1, 0)
+            Point2 = "{}{}{:02d}{:02d}".format(H, Q, 2, 1)
+            Point3 = "{}{}{:02d}{:02d}".format(H, Q+1, 1, 0)
+            Btriangles.append([Point1, Point2, Point3])
+    for Ra in range(2, v, 2):  # R loops from 2 to v-1
+        for j in range(1, Ra, 2):
+            for H in [0, 1]:  # H loops from 0 to 1
+                for Q in [1, 3]:  # Q loops only through 0 and 2
+                    Point1 = "{}{}{:02d}{:02d}".format(H, Q, Ra, j)
+                    Point2 = "{}{}{:02d}{:02d}".format(H, Q, Ra + 1, j)
+                    Point3 = "{}{}{:02d}{:02d}".format(H, Q, Ra + 1, j+1)
+                    Btriangles.append([Point1, Point2, Point3])
+    for Ra in range(3, v, 2):  # R loops from 1 to v-2
+        for j in range(2, Ra + 2, 2):
+            for H in [0, 1]:  # H loops from 0 to 1
+                for Q in [0, 2]:  # Q loops only through 0 and 2
+                    Point1 = "{}{}{:02d}{:02d}".format(H, Q , Ra, j - 2)
+                    if H==0:
+                        Q2 = Q
+                        L2 = j - 1
+                        H2 = 0
+                    else:
+                            if Ra == v - 1:
+                             Q2 = (1 - Q) % 4
+                             L2 = v - j + 1
+                             H2 = 0
+                            else:
+                               Q2 = Q
+                               L2 = j - 1
+                               H2 = H
+                    Point2 = "{}{}{:02d}{:02d}".format(H2, Q2, Ra + 1, L2)
+                    Q3 = Q  if j < Ra else Q + 1
+                    Q3 = Q3 if Q3 < 4 else 0
+                    L3 = j - 1 if j < Ra else 0
+                    Point3 = "{}{}{:02d}{:02d}".format(H, Q3, Ra, L3)
+                    Btriangles.append([Point1, Point2, Point3])
+
+    # Generate closed polylines for each Btriangle
+    Bpolylines = []
+    for Btriangle in Btriangles:
+        Bindices = []
+        for Bpoint_name in Btriangle:
+            # Find the row in data_table where the 'Name' matches point_name
+            Bindex = next((row[0] for row in data_table if row[5] == Bpoint_name), None)
+            if index is not None:
+                Bindices.append(Bindex)
+
+        if len(Bindices) == 3:
+            pt1 = points[Bindices[0]]
+            pt2 = points[Bindices[1]]
+            pt3 = points[Bindices[2]]
+            Bpolyline = rg.Polyline([pt1, pt2, pt3, pt1])  # Closed polyline
+            Bpolylines.append(Bpolyline)
+
+    # Scale points down by Ri/Ro to create ipoints
+    scaling_factor = Ri / Ro
+    ipoints = []
+    for pt in points:
+        scaled_point = rg.Point3d(pt.X * scaling_factor, pt.Y * scaling_factor, pt.Z * scaling_factor)
+        ipoints.append(scaled_point)
+
+    #create the topology of Atriangles in the inner layer
+    #inner layer Atriangles use the topology of outer layer Btriangles
+    iAtriangles = Btriangles
+    iBtriangles = Atriangles
+    
+    #create polylines for inner layer Atriangles
+    iApolylines = []
+    for triangle in iAtriangles:
+        indices = []
+        for point_name in triangle:
+            # Find the row in data_table where the 'Name' matches point_name
+            index = next((row[0] for row in data_table if row[5] == point_name), None)
+            if index is not None:
+                indices.append(index)
+
+        if len(indices) == 3:
+            pt1 = ipoints[indices[0]]
+            pt2 = ipoints[indices[1]]
+            pt3 = ipoints[indices[2]]
+            polyline = rg.Polyline([pt1, pt2, pt3, pt1])  # Closed polyline
+            iApolylines.append(polyline)
+            
+    #create polylines for inner layer Btriangles
+    iBpolylines = []
+    for iBtriangle in iBtriangles:
+        iBindices = []
+        for iBpoint_name in iBtriangle:
+            # Find the row in data_table where the 'Name' matches point_name
+            iBindex = next((row[0] for row in data_table if row[5] == iBpoint_name), None)
+            if iBindex is not None:
+                iBindices.append(iBindex)
+
+        if len(iBindices) == 3:
+            pt1 = ipoints[iBindices[0]]
+            pt2 = ipoints[iBindices[1]]
+            pt3 = ipoints[iBindices[2]]
+            iBpolyline = rg.Polyline([pt1, pt2, pt3, pt1])  # Closed polyline
+            iBpolylines.append(iBpolyline)
+            
+    # Create the poles_CL lines
+        poles_CL = []
+        for i in range(len(Atriangles)):
+         for j in range(3):
+          print ("i,j")
+          print (i,j)
+          A_point = Atriangles[i][j]
+          print ("A_point")
+          print (A_point)
+          A_index = next((row[0] for row in data_table if row[5] == A_point), None)
+          print ("A_index")
+          print A_index
+          if A_index is not None:
+            next_A_point = Atriangles[i][(j + 1) % 3]
+            print("next_A_point")
+            print(next_A_point)
+            # Find the B-triangle that corresponds to the A-triangle's point
+            for Btriangle in Btriangles:
+                if next_A_point in Btriangle:
+                    # Get the index of next_A_point in Btriangle
+                    B_indexR = Btriangles.index(Btriangle)
+                    print ("B_indexR")
+                    print B_indexR
+                    B_indexC = Btriangle.index(next_A_point)
+                    print ("B_indexC")
+                    print B_indexC
+                    break
+            
+            next_B_point = Btriangles[B_indexR][(B_indexC+1) % 3]  # Find the next point in Btriangle
+            print("next_B_point")
+            print(next_B_point)
+            next_B_index = next((row[0] for row in data_table if row[5] == next_B_point), None)
+            print("next_B_index")
+            print(next_B_index)
+            if next_B_index is not None:
+                line = rg.Line(points[A_index], ipoints[next_B_index])
+                poles_CL.append(line)
+                print ("{:0.}".format(points[A_index]))
+                print ("{:0.}".format(ipoints[next_B_index]))
+
+    # Output the data
+    a = data_table
+    b = headers
+    c = points
+    ci = ipoints  # New output: ipoints (scaled points)
+    d = Atriangles
+    e = Apolylines  # New output: list of closed polylines
+    f = Btriangles
+    g = Bpolylines
+    h = iApolylines
+    i = iBpolylines
+    j = poles_CL
+
+    return a, b, c, ci, d, e, f, g, h, i, j
+
+
+try:
+    # Generate data table, points, scaled points, triangles, and polylines
+    a, b, c, ci, d, e, f, g, h, i, j = generate_and_compute_data(v, Ro, Ri)
+except ValueError as e:
+    # Handle errors and provide empty lists in case of exceptions
+    a = []
+    b = []
+    c = []
+    ci = []
+    d = []
+    e = []
+    f = []
+    g = []
+    h = []
+    i = []
+    j = []
+    print("Error:", e)
+
+# Output the results
+a_output = a
+b_output = b
+c_output = c
+ci_output = ci  # Scaled points output
+d_output = d
+e_output = e
+f_output = f
+g_output = g
+h_output = h
+i_output = i
+j_output = j
